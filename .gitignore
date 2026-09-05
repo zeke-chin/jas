@@ -13,4 +13,15 @@ target/
 
 ipas
 jas.db*
-jas.toml
+
+# Docker deployment secrets, persistent data, exports, and CI build caches
+.env
+.env.*
+data/
+.buildkit-cache/
+.cache-dance/
+*.ipa
+*.mobiledevicepairing
+pairingFile.plist
+*.tar
+*.tar.gz

@@ -1,0 +1,243 @@
+name: Docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'src/**'
+      - 'style/**'
+      - 'public/**'
+      - '.sqlx/**'
+      - 'migrations/**'
+      - 'jas.toml'
+      - 'compose.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.rs'
+      - 'src/**'
+      - 'style/**'
+      - 'public/**'
+      - '.sqlx/**'
+      - 'migrations/**'
+      - 'jas.toml'
+      - 'compose.yml'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'docker/**'
+      - '.github/workflows/docker.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    name: Build and test Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Validate deployment configuration
+        run: docker compose config --quiet
+
+      - name: Set lowercase image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      # Register cache save BEFORE cache-dance so its post-step extracts the
+      # mount before actions/cache's post-step saves it. A SHA suffix permits
+      # saving newly compiled application/dependency artifacts on each commit.
+      - name: Restore Cargo compilation cache
+        id: cargo-cache
+        uses: actions/cache@v5
+        with:
+          path: .buildkit-cache
+          key: jas-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Dockerfile', 'Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            jas-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Dockerfile', 'Cargo.lock') }}-
+            jas-cargo-v1-${{ runner.os }}-${{ runner.arch }}-
+
+      # GHA layer caching alone does NOT persist RUN --mount=type=cache.
+      - name: Restore and save the BuildKit cache mount
+        uses: reproducible-containers/buildkit-cache-dance@4b2444fec0c0fb9dbf175a96c094720a692ef810 # v2.1.4
+        with:
+          cache-source: .buildkit-cache
+          cache-target: /cache
+          scratch-dir: .cache-dance
+          skip-extraction: ${{ steps.cargo-cache.outputs.cache-hit == 'true' }}
+
+      - name: Build image and load it for testing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          push: false
+          tags: local/jas:ci
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GITHUB_SHA=${{ github.sha }}
+            GITHUB_RUN_NUMBER=${{ github.run_number }}
+            GITHUB_REF_NAME=${{ github.ref_name }}
+          cache-from: type=gha,scope=jas-image-${{ matrix.arch }}
+          cache-to: type=gha,scope=jas-image-${{ matrix.arch }},mode=max,ignore-error=true
+
+      # No Apple account, device, or deployment secrets are used in this test.
+      - name: Smoke-test the web server and bundled assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          jas_smoke_data=$(mktemp -d "${RUNNER_TEMP}/jas-smoke.XXXXXX")
+          sudo chown 10001:10001 "$jas_smoke_data"
+          sudo chmod 700 "$jas_smoke_data"
+          cleanup() {
+            docker logs jas-docker-smoke || true
+            docker rm -f jas-docker-smoke >/dev/null || true
+          }
+          start_smoke() {
+            docker run --detach --init --name jas-docker-smoke --network host \
+              --cap-drop ALL --security-opt no-new-privileges:true \
+              --mount "type=bind,source=${GITHUB_WORKSPACE}/jas.toml,target=/etc/jas/jas.toml,readonly" \
+              --mount "type=bind,source=${jas_smoke_data},target=/data" local/jas:ci
+          }
+          trap cleanup EXIT
+          start_smoke
+          curl --fail --silent --show-error --retry 20 --retry-all-errors \
+            --retry-delay 2 --max-time 5 --output /dev/null http://127.0.0.1:3010/
+          docker exec jas-docker-smoke test -s /app/site/pkg/jas.js
+          docker exec jas-docker-smoke test -s /app/site/pkg/jas_bg.wasm
+          curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3010/pkg/jas.js
+          # Compare inside the container so the key never appears in CI logs.
+          docker exec jas-docker-smoke sh -ec 'test "$(stat -c %a /data/.jas-secret-key)" = 600; cp /data/.jas-secret-key /data/.jas-smoke-key'
+          docker rm -f jas-docker-smoke
+          start_smoke
+          curl --fail --silent --show-error --retry 20 --retry-all-errors \
+            --retry-delay 2 --max-time 5 --output /dev/null http://127.0.0.1:3010/
+          docker exec jas-docker-smoke cmp -s /data/.jas-smoke-key /data/.jas-secret-key
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Run-specific tags isolate workflows and allow rerunning only failed jobs.
+      # Publish the exact image tested above, without a second compilation.
+      - name: Publish tested architecture image
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          image_tag="${IMAGE_NAME}:build-${GITHUB_RUN_ID}-${IMAGE_ARCH}"
+          docker image tag local/jas:ci "$image_tag"
+          docker image push "$image_tag"
+
+  publish:
+    name: Publish multi-platform image
+    needs: docker
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Set lowercase image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.image.outputs.name }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Public tags are updated only after BOTH architectures pass smoke tests.
+      - name: Merge and verify architecture images
+        shell: bash
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r image_tag; do
+            if [ -n "$image_tag" ]; then
+              tag_args+=(--tag "$image_tag")
+            fi
+          done <<< "$IMAGE_TAGS"
+          docker buildx imagetools create "${tag_args[@]}" \
+            "${IMAGE_NAME}:build-${GITHUB_RUN_ID}-amd64" \
+            "${IMAGE_NAME}:build-${GITHUB_RUN_ID}-arm64"
+          image_tag=$(head -n 1 <<< "$IMAGE_TAGS")
+          docker buildx imagetools inspect "$image_tag" --raw | jq -e '
+            [.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]'

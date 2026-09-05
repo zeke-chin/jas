@@ -1,0 +1,19 @@
+services:
+  jas:
+    image: ghcr.io/zeke-chin/jas:latest
+    # Linux host networking is needed for LAN mDNS discovery. No ports mapping.
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    volumes:
+      - ./jas.toml:/etc/jas/jas.toml:ro
+      - ./data:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

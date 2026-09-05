@@ -1,0 +1,20 @@
+# Allow only build inputs; never send credentials, pairing records, IPAs,
+# databases, local build outputs, or GitHub Actions caches to the builder.
+**
+!Dockerfile
+!.dockerignore
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!.sqlx/
+!.sqlx/**
+!migrations/
+!migrations/**
+!src/
+!src/**
+!style/
+!style/**
+!public/
+!public/**
+!docker/
+!docker/entrypoint.sh

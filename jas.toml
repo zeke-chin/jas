@@ -1,0 +1,20 @@
+[server]
+# Listen on all IPv4 interfaces. JAS has no built-in web authentication:
+# restrict access to trusted networks; do not expose this port to the Internet.
+bind = "0.0.0.0:3010"
+log_level = "info"
+
+[storage]
+# Docker bind-mounts ./data at /data. Local cargo: JAS_DATA_DIR=data/local
+database_path = "/data/jas.db"
+ipa_dir = "/data/ipas"
+
+[scheduler]
+interval_hours = 2
+refresh_window_days = 3
+worker_threads = 1
+
+[discovery]
+mdns_enabled = true
+# Optional host interface, e.g. "enp3s0". Empty uses the default discovery setup.
+mdns_interface = ""

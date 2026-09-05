@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
@@ -94,7 +94,7 @@ impl Config {
 
         match std::fs::read_to_string(&path) {
             Ok(content) => match toml::from_str(&content) {
-                Ok(cfg) => cfg,
+                Ok(cfg) => apply_data_dir(cfg),
                 Err(e) => {
                     tracing::error!("Failed to parse config: {e}");
                     Self::default()
@@ -129,4 +129,31 @@ impl Config {
         out[..len].copy_from_slice(&bytes[..len]);
         out
     }
+}
+
+/// Rebase `/data/...` storage paths when `JAS_DATA_DIR` is set.
+/// Docker leaves this unset (or `/data`) so `jas.toml` is used as written.
+/// Local cargo runs set `JAS_DATA_DIR=data/local` and reuse the same file.
+fn apply_data_dir(mut cfg: Config) -> Config {
+    let Ok(data_dir) = std::env::var("JAS_DATA_DIR") else {
+        return cfg;
+    };
+    if data_dir.is_empty() {
+        return cfg;
+    }
+    let data_dir = PathBuf::from(data_dir);
+    cfg.storage.database_path = rebase_data_path(&cfg.storage.database_path, &data_dir);
+    cfg.storage.ipa_dir = rebase_data_path(&cfg.storage.ipa_dir, &data_dir);
+    cfg
+}
+
+fn rebase_data_path(path: &str, data_dir: &Path) -> String {
+    const PREFIX: &str = "/data";
+    if path == PREFIX {
+        return data_dir.to_string_lossy().into_owned();
+    }
+    if let Some(rest) = path.strip_prefix("/data/") {
+        return data_dir.join(rest).to_string_lossy().into_owned();
+    }
+    path.to_string()
 }

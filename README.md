@@ -1,5 +1,7 @@
 # JAS
 
+[中文 / Docker 部署指南](README.zh.md)
+
 **Jackson's App Sensei**: a self-hosted alternative to AltServer that runs on a
 server and exposes a web portal for installing and refreshing iOS apps over a
 local network or VPN.
