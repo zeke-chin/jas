@@ -22,10 +22,14 @@ RUN apt-get update \
 
 # Install the build tool before copying application sources. Keep its binary
 # outside the cache mount so this layer is sufficient on a fresh builder.
-# The linker override only applies to this native tool, never to the WASM app.
+# The linker override is stable only on x86_64 Linux. Keep ARM64 on its
+# default linker, and never pass this override to the WASM app.
+ARG TARGETARCH
 RUN --mount=type=cache,target=/cache,sharing=locked \
     export CARGO_BUILD_JOBS="${BUILD_JOBS:-$(nproc)}" \
-    && RUSTFLAGS="-C linker-features=-lld" cargo install \
+    && jas_tool_rustflags="" \
+    && case "$TARGETARCH" in amd64) jas_tool_rustflags="-C linker-features=-lld" ;; esac \
+    && RUSTFLAGS="$jas_tool_rustflags" cargo install \
        --locked --version "${CARGO_LEPTOS_VERSION}" \
        --root /opt/cargo-tools --target-dir /tmp/jas-cargo-leptos-build cargo-leptos \
     && rm -rf /tmp/jas-cargo-leptos-build
