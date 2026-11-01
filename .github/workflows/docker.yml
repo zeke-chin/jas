@@ -151,7 +151,7 @@ jobs:
           curl --fail --silent --show-error --retry 20 --retry-all-errors \
             --retry-delay 2 --max-time 5 --output /dev/null http://127.0.0.1:3010/
           docker exec jas-docker-smoke test -s /app/site/pkg/jas.js
-          docker exec jas-docker-smoke test -s /app/site/pkg/jas_bg.wasm
+          docker exec jas-docker-smoke test -s /app/site/pkg/jas.wasm
           curl --fail --silent --show-error --output /dev/null http://127.0.0.1:3010/pkg/jas.js
           # Compare inside the container so the key never appears in CI logs.
           docker exec jas-docker-smoke sh -ec 'test "$(stat -c %a /data/.jas-secret-key)" = 600; cp /data/.jas-secret-key /data/.jas-smoke-key'
