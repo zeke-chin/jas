@@ -591,8 +591,9 @@ pub async fn install_ipa(
         .decrypt(encrypted_pairing)
         .map_err(|_| anyhow::anyhow!("Failed to decrypt pairing file"))?;
 
-    let (mut handle, mut handshake) =
-        open_cdtunnel_preferring_mdns(device_ip, mdns_ip, &pairing_bytes).await?;
+    // Fail fast if the device is unreachable, but defer the tunnel itself:
+    // signing can take a while and an idle CDTunnel goes stale before AFC.
+    tcp_ping(device_ip, mdns_ip).await?;
 
     let team = sideloader
         .get_team()
@@ -641,6 +642,9 @@ pub async fn install_ipa(
     .await
     .map_err(|e| anyhow::anyhow!("zip task panicked: {e}"))??;
     info!("IPA size: {} B", ipa_bytes.len());
+
+    let (mut handle, mut handshake) =
+        open_cdtunnel_preferring_mdns(device_ip, mdns_ip, &pairing_bytes).await?;
 
     info!("Connecting AFC");
     let mut afc = AfcClient::connect_rsd(&mut handle, &mut handshake)
