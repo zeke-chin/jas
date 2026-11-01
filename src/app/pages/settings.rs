@@ -173,7 +173,7 @@ pub fn Settings() -> impl IntoView {
                                                     <input
                                                         type="url"
                                                         required
-                                                        placeholder="https://ani.stikstore.app"
+                                                        placeholder="https://ani.iloader.app"
                                                         prop:value=anisette_input
                                                         on:input=move |e| {
                                                             anisette_input.set(event_target_value(&e))

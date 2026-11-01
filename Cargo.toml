@@ -44,6 +44,7 @@ base64 = { version = "0.22" }
 # SSR-only
 isideload = { git = "https://github.com/nab138/isideload", optional = true, default-features = false, features = [
   "install",
+  "tokio-mt",
 ] }
 idevice = { version = "0.1.61", optional = true, features = [
   "tcp",
@@ -78,6 +79,9 @@ plist = { version = "1", optional = true }
 zip = { version = "2", default-features = false, features = [
   "deflate",
 ], optional = true }
+rustls = { version = "0.23", default-features = false, features = [
+  "ring",
+], optional = true }
 
 [features]
 hydrate = [
@@ -107,6 +111,7 @@ ssr = [
   "dep:sha2",
   "dep:hex",
   "dep:rootcause",
+  "dep:rustls",
   "dep:mdns-sd",
   "dep:plist",
   "dep:zip",

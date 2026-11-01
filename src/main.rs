@@ -18,6 +18,12 @@ async fn main() {
         },
     };
 
+    // Dependencies enable several rustls backends, so pick one explicitly
+    // before anything opens a TLS connection.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
+
     // Load config.
     let config = Config::load();
 
@@ -43,7 +49,7 @@ async fn main() {
     .await
     .ok()
     .flatten()
-    .unwrap_or_else(|| "https://ani.stikstore.app".to_string());
+    .unwrap_or_else(|| isideload::anisette::remote_v3::DEFAULT_ANISETTE_V3_URL.to_string());
     info!("Anisette server: {anisette_url}");
 
     // Derive encryption key.
